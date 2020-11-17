@@ -2,11 +2,13 @@
 import asyncio
 import logging
 import pathlib
+import shutil
 from typing import Any, Dict, Optional, Union
 
 import voluptuous as vol
 from voluptuous.humanize import humanize_error
 
+from homeassistant import loader
 from homeassistant.const import CONF_DOMAIN, CONF_NAME, CONF_PATH
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -149,6 +151,11 @@ class DomainBlueprints:
 
         hass.data.setdefault(DOMAIN, {})[domain] = self
 
+    @property
+    def blueprint_folder(self) -> pathlib.Path:
+        """Return the blueprint folder."""
+        return pathlib.Path(self.hass.config.path(BLUEPRINT_FOLDER, self.domain))
+
     @callback
     def async_reset_cache(self) -> None:
         """Reset the blueprint cache."""
@@ -157,9 +164,7 @@ class DomainBlueprints:
     def _load_blueprint(self, blueprint_path) -> Blueprint:
         """Load a blueprint."""
         try:
-            blueprint_data = yaml.load_yaml(
-                self.hass.config.path(BLUEPRINT_FOLDER, self.domain, blueprint_path)
-            )
+            blueprint_data = yaml.load_yaml(self.blueprint_folder / blueprint_path)
         except (HomeAssistantError, FileNotFoundError) as err:
             raise FailedToLoad(self.domain, blueprint_path, err) from err
 
@@ -237,10 +242,7 @@ class DomainBlueprints:
 
     async def async_remove_blueprint(self, blueprint_path: str) -> None:
         """Remove a blueprint file."""
-        path = pathlib.Path(
-            self.hass.config.path(BLUEPRINT_FOLDER, self.domain, blueprint_path)
-        )
-
+        path = self.blueprint_folder / blueprint_path
         await self.hass.async_add_executor_job(path.unlink)
         self._blueprints[blueprint_path] = None
 
@@ -268,3 +270,17 @@ class DomainBlueprints:
         )
 
         self._blueprints[blueprint_path] = blueprint
+
+    async def async_populate(self) -> None:
+        """Create folder if it doesn't exist and populate with examples."""
+        integration = await loader.async_get_integration(self.hass, self.domain)
+
+        def populate():
+            if self.blueprint_folder.exists():
+                return
+
+            shutil.copytree(
+                integration.file_path / BLUEPRINT_FOLDER, self.blueprint_folder
+            )
+
+        await self.hass.async_add_executor_job(populate)
