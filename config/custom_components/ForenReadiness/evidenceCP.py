@@ -1,3 +1,5 @@
+import logging
+
 from homeassistant.core import callback
 from homeassistant.helpers.event import TrackStates, async_track_state_change_filtered
 from homeassistant.helpers.typing import HomeAssistantType
@@ -10,6 +12,8 @@ from .const import (
     PLATFORM_PROFILE,
     STORAGE_VERSION,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class EvidenceCP:
@@ -42,13 +46,14 @@ class EvidenceCP:
             # TODO: Add automation storage objects for each platform
             # TODO: Add Connector storage objects for each platform
 
-        # Create Store objects of OOFIs in device categories
+        # Create Store objects of OOFIs in entity categories
         for device_id, device_profile in self.profiles[DEVICE_PROFILE].items():
-            device_storage_key = FORENSIC_STORAGE_PREFIX + device_id
-            device_storage = hass.helpers.storage.Store(
-                STORAGE_VERSION, device_storage_key
-            )
-            self.device_evidence_store[device_id] = device_storage
+            for entity_entry in device_profile.entity_entries:
+                entity_storage_key = FORENSIC_STORAGE_PREFIX + entity_entry.entity_id
+                entity_storage = hass.helpers.storage.Store(
+                    STORAGE_VERSION, entity_storage_key
+                )
+                self.device_evidence_store[entity_entry.entity_id] = entity_storage
 
         # Create Store objects of OOFIs in LAN categories
         for lan_component_id, lan_component_profile in self.profiles[
@@ -78,7 +83,17 @@ class EvidenceCP:
 
         @callback
         def handle_state_change(event):
-            print(event)
+            """
+            Store received device events from cloud
+            """
+            event_data = event.as_dict()["data"]
+            event_time_fired = event.as_dict()["time_fired"]
+            print(event_data)
+            print(event_time_fired)
+            try:
+                entity_store = self.device_evidence_store[event_data["entity_id"]]
+            except:
+                _LOGGER.error("Cannot find the storage object for entity_id")
             return 1
 
         entity_id_list = set()
