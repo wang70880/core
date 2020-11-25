@@ -4,7 +4,7 @@ import homeassistant
 from homeassistant.config_entries import ConfigEntries as ce
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.device_registry import DeviceEntry
+from homeassistant.helpers.device_registry import DeviceEntry, DeviceRegistry
 from homeassistant.helpers.entity_registry import (
     async_entries_for_device,
     async_get_registry,
@@ -12,9 +12,13 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.event import TrackStates, async_track_state_change_filtered
 
 from .const import (
+    ALL,
+    CHECK_DEVICE_TYPE,
+    CHECK_PLATFORM,
     DEVICE_PROFILE,
     LAN_PROFILE,
     PLATFORM_PROFILE,
+    ROUTER,
     ROUTER_IP,
     ROUTER_PASSWD,
     ROUTER_USERNAME,
@@ -24,147 +28,6 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class DeviceSetup:
-    def __init__(self):
-        self.filter = Filter()
-        self.unsub_device_tracker = None
-        self.profiles = {}
-
-    # Get the user preference to configure forensic filter list
-    # Currently our forensic system only support platform and device_type filter category
-    def build_filter(self, platforms, device_types):
-        self.filter.build_platform_filter(platforms)
-        self.filter.build_device_type_filter(device_types)
-        return 1
-
-    # An initial device list is constructed when the system starts
-    # Note that only devices which are not filtered out can be added to the list
-    async def async_initialize_device_list(self, hass: HomeAssistant):
-        device_registry = await dr.async_get_registry(hass)
-        config_entries = hass.config_entries
-        entity_registry = await async_get_registry(hass)
-        # Load every stored device entry, and build a DeviceProfile instance. Then store all DeviceProfile in self.profiles["device_profile"]
-        self.profiles[DEVICE_PROFILE] = {}
-        for temp_device in device_registry.devices.values():
-            # Use the filter to filter out devices which users don't care
-            if await self.filter.async_check_device(hass, temp_device):
-                # Get Entities
-                entity_registry_entries = async_entries_for_device(
-                    entity_registry, temp_device.id
-                )
-                # Get config_Entries
-                device_config_entries = []
-                for entity_registry_entity in entity_registry_entries:
-                    config_entry_id = entity_registry_entity.config_entry_id
-                    device_config_entries.append(
-                        config_entries.async_get_entry(config_entry_id)
-                    )
-                # Build DeviceProfile
-                device_profile = DeviceProfile(
-                    temp_device, entity_registry_entries, device_config_entries
-                )
-                self.profiles[DEVICE_PROFILE][device_profile.id] = device_profile
-
-        # Build RouterProfile and store in self.profiles["router_profile"]
-        # TODO: Here we hardcoded router information. A user configuration step is needed.
-        self.profiles[LAN_PROFILE] = RouterProfile(
-            ROUTER_IP, ROUTER_USERNAME, ROUTER_PASSWD
-        )
-        # Build PlatformProfile and store in self.profiles["platform_profile"]
-        # TODO: Here we hardcoded platform information. A user configuration step is needed
-        self.profiles[PLATFORM_PROFILE] = {}
-        for platform_name in self.filter.platforms:
-            self.profiles[PLATFORM_PROFILE][platform_name] = PlatformProfile(
-                platform_name
-            )
-        return 1
-
-    @callback
-    def handle_state_change(self, event):
-        """callback function to handle state change event"""
-        print(f"Event comes: {event}")
-        # TODO: This is the callback function which is used by async_dynamic_maintain_device_list()
-        return 1
-
-    # Dynamic maintaince of device lists by subscribing to device events
-    async def async_dynamic_maintain_device_list(self, hass: HomeAssistant):
-        """Register Listener for device change event"""
-        # TODO: This is not the core functionality of forensics. Implement it later.
-        self.unsub_device_tracker = async_track_state_change_filtered(
-            hass,
-            TrackStates(True, entities=set(), domains={"hue"}),
-            self.handle_state_change,
-        ).async_remove
-        return 1
-
-
-class Filter:
-    def __init__(self):
-        self.platforms = []
-        self.device_types = []
-
-    def build_platform_filter(self, platforms):
-        if "all" in platforms:
-            self.platforms = [x for x in SUPPORTED_PLATFORMS if x != "all"]
-        else:
-            self.platforms = platforms
-        return 1
-
-    def build_device_type_filter(self, device_types):
-        if "all" in device_types:
-            self.device_types = [x for x in SUPPORTED_DEVICE_TYPE if x != "all"]
-        else:
-            self.device_types = device_types
-        return 1
-
-    async def async_check_device(self, hass: HomeAssistant, device_entry: DeviceEntry):
-        """Check whether a device is in user's preference list."""
-        CHECK_PLATFORM = 1
-        CHECK_DEVICE_TYPE = 2
-        flag = 0
-        # Load Platform and Device_Type information from config_entries
-        for config_entry_id in device_entry.config_entries:
-            config_entry = hass.config_entries.async_get_entry(config_entry_id)
-            # Check Platform
-            if config_entry.domain in self.platforms:
-                flag = flag | CHECK_PLATFORM
-            # TODO: Check Device Type. This is an additional feature, and leave for future development.
-            flag = flag | CHECK_DEVICE_TYPE
-            # if config_entry.domain == "hue":
-            #    print(
-            #        "******* id:{}, name:{}, manufacturer:{}, model:{}, sw_version:{}, via_device_id:{}, \
-            #   area_id:{}, entry_type:{}, connections:{}, identifiers{}, config_entries:{} ******".format(
-            #            device_entry.id,
-            #            device_entry.name,
-            #            device_entry.manufacturer,
-            #            device_entry.model,
-            #            device_entry.sw_version,
-            #            device_entry.via_device_id,
-            #            device_entry.area_id,
-            #            device_entry.entry_type,
-            #            device_entry.connections,
-            #            device_entry.identifiers,
-            #            device_entry.config_entries,
-            #        )
-            #    )
-            #    print("config_entry:{}".format(config_entry.as_dict()))
-        if flag == CHECK_PLATFORM | CHECK_DEVICE_TYPE:
-            return 1
-        return 0
-
-
-class PlatformProfile:
-    def __init__(self, name):
-        self.name = name
-
-
-class RouterProfile:
-    def __init__(self, ip, username, passwd):
-        self.ip = ip
-        self.username = username
-        self.passwd = passwd
 
 
 class DeviceProfile:
@@ -189,4 +52,203 @@ class DeviceProfile:
         self.entity_entries = entity_entries
         # Device Entry stores information about the device
         self.device_entry = device_entry
-        # Leave for adding new information which home assistant didn't record
+        # Platform id which devices belongs to
+        self.platform_name = ""
+
+
+class PlatformProfile:
+    def __init__(self, name):
+        self.name = name
+        self.devices = {}
+        self.connection = {}
+        self.apps = {}
+
+    def add_device(self, deviceProfile):
+        """
+        Record that the deviceProfile belongs to current platform
+        """
+        self.devices[deviceProfile.device_entry.id] = deviceProfile
+
+
+class RouterProfile:
+    def __init__(self, ip, username, passwd):
+        self.ip = ip
+        self.username = username
+        self.passwd = passwd
+
+
+class Filter:
+    def __init__(self):
+        self.platforms = []
+        self.device_types = []
+
+    def build_platform_filter(self, platforms):
+        """
+        Build filter lists of platform
+        """
+        if ALL in platforms:
+            self.platforms = [x for x in SUPPORTED_PLATFORMS if x != "all"]
+        else:
+            self.platforms = platforms
+        return 1
+
+    def build_device_type_filter(self, device_types):
+        """
+        Build filter lists of device type
+        """
+        if ALL in device_types:
+            self.device_types = [x for x in SUPPORTED_DEVICE_TYPE if x != "all"]
+        else:
+            self.device_types = device_types
+        return 1
+
+    def check_platform(self, platform_name):
+        """
+        Check whether current platform is of user's interest
+        """
+        if platform_name in self.platforms:
+            return CHECK_PLATFORM
+        return 0
+
+    async def async_check_device(
+        self, hass: HomeAssistant, device_profile: DeviceProfile
+    ):
+        """
+        Check whether current device type is of user's interest.
+        Check whether current device's platform is of users' interest.
+        """
+        flag = 0
+        for config_entry in device_profile.device_config_entries:
+            # Check if the device belongs to a user-focused platform
+            if config_entry.domain in self.platforms:
+                flag = flag | CHECK_PLATFORM
+                # Modify the DeviceProfile to update platform information
+                device_profile.platform_name = config_entry.domain
+        # TODO: Implement it to check device type
+        flag = flag | CHECK_DEVICE_TYPE
+        if flag == CHECK_DEVICE_TYPE | CHECK_PLATFORM:
+            return flag
+        return 0
+
+
+class DeviceSetup:
+    def __init__(self):
+        self.filter = Filter()
+        self.unsub_device_tracker = None
+        # profiles for objects of forensic interests (OOFI)
+        self.profiles = {}
+
+    # Get the user preference to configure forensic filter list
+    # Currently our forensic system only support platform and device_type filter category
+    def build_filter(self, platforms, device_types):
+        self.filter.build_platform_filter(platforms)
+        self.filter.build_device_type_filter(device_types)
+        return 1
+
+    # Note that only devices which are not filtered out can be added to the list
+    async def async_initialize_source_list(self, hass: HomeAssistant):
+        """
+        This function is used for identifying potential forensic devices.
+        As a result, an initial OOFI list is constructed.
+        Note that only devices which are not filtered out can be added to the list
+        """
+        device_registry: DeviceRegistry = await dr.async_get_registry(hass)
+        config_entries = hass.config_entries
+        entity_registry = await async_get_registry(hass)
+
+        self.profiles[PLATFORM_PROFILE] = {}
+        self.profiles[DEVICE_PROFILE] = {}
+        self.profiles[LAN_PROFILE] = {}
+
+        # Build PlatformProfile and store in self.profiles["platform_profile"]
+        for platform_name in self.filter.platforms:
+            # Use the filter to filter out platforms which users don't care
+            if self.filter.check_platform(platform_name):
+                self.profiles[PLATFORM_PROFILE][platform_name] = PlatformProfile(
+                    platform_name
+                )
+
+        # Traverse each stored device entry, and build DeviceProfile instance
+        for temp_device in device_registry.devices.values():
+            # Get Entity registries
+            entity_registry_entries = async_entries_for_device(
+                entity_registry, temp_device.id
+            )
+            # Get config_Entries
+            device_config_entries = []
+            for entity_registry_entity in entity_registry_entries:
+                config_entry_id = entity_registry_entity.config_entry_id
+                device_config_entries.append(
+                    config_entries.async_get_entry(config_entry_id)
+                )
+            # Build DeviceProfile and add it to profiles
+            # It contains three parts: DeviceProperties + DeviceEntries + DeviceConfigEntries
+            device_profile = DeviceProfile(
+                temp_device, entity_registry_entries, device_config_entries
+            )
+            # Use Filter to check if current device is of user's interest
+            if await self.filter.async_check_device(hass, device_profile):
+                # Add the deviceProfile to profiles
+                self.profiles[DEVICE_PROFILE][
+                    device_profile.device_entry.id
+                ] = device_profile
+                try:
+                    # Update PlatformProfile to add this device
+                    platform_profile: PlatformProfile = self.profiles[PLATFORM_PROFILE][
+                        device_profile.platform_name
+                    ]
+                    platform_profile.add_device(device_profile)
+                except:
+                    _LOGGER.error("Cannot find the platform!")
+                    return 0
+
+        # Build LANProfile and store in self.profiles["lan_profile"]
+        # TODO: Currently there is only router information. Also, the router information is hardcoded.
+        self.profiles[LAN_PROFILE][ROUTER] = RouterProfile(
+            ROUTER_IP, ROUTER_USERNAME, ROUTER_PASSWD
+        )
+
+        return 1
+
+    async def async_dynamic_maintain_device_list(self, hass: HomeAssistant):
+        """Register Listener for device change event"""
+
+        @callback
+        def handle_state_change(event):
+            """ callback function to handle state change event"""
+            # TODO: we need to extract device join/leave from the state change event
+            return 1
+
+        # TODO: This is not the core functionality of forensics. Implement it later.
+        # self.unsub_device_tracker = async_track_state_change_filtered(
+        #    hass,
+        #    TrackStates(True, entities=set(), domains={"hue"}),
+        #    handle_state_change,
+        # ).async_remove
+        return 1
+
+    def debug_profiles(self):
+        print("****** Number for each profile categories ******")
+        print(
+            "platform_profiles: {}, device_profiles: {}, lan_profiles: {}".format(
+                len(self.profiles[PLATFORM_PROFILE]),
+                len(self.profiles[DEVICE_PROFILE]),
+                len(self.profiles[LAN_PROFILE]),
+            )
+        )
+        print("****** Device Profile Components ******")
+        for device_profile_id, device_profile in self.profiles[DEVICE_PROFILE].items():
+            print(
+                "name: {}, platform: {}".format(
+                    device_profile.device_entry.name, device_profile.platform_name
+                )
+            )
+            print(
+                "size of entity_entries:{}".format(len(device_profile.entity_entries))
+            )
+            for entity_entry in device_profile.entity_entries:
+                print(
+                    "entity_domain: {}, entity_id: {}".format(
+                        entity_entry.domain, entity_entry.entity_id
+                    )
+                )
